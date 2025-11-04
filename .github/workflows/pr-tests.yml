@@ -1,17 +1,12 @@
 name: PR Tests
 
 on:
-  # Manual trigger button
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: 'PR number to test'
-        required: true
-        type: number
-
   # Trigger via PR comment with /test command
   issue_comment:
     types: [created]
+  # Also trigger on PR events
+  pull_request:
+    types: [ opened, synchronize, reopened ]
 
 jobs:
   check-comment:
