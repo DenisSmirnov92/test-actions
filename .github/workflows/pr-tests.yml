@@ -8,49 +8,83 @@ on:
         description: 'PR number to test'
         required: true
         type: number
-  
-  # Also trigger on PR events
-  pull_request:
-    types: [opened, synchronize, reopened]
+
+  # Trigger via PR comment with /test command
+  issue_comment:
+    types: [created]
 
 jobs:
-  run-tests:
+  check-comment:
+    # Only run on PR comments with /test
+    if: |
+      github.event_name == 'issue_comment' && 
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/test')
     runs-on: ubuntu-latest
-    
+    outputs:
+      should_run: ${{ steps.check.outputs.result }}
     steps:
+      - name: Check if should run
+        id: check
+        run: echo "result=true" >> $GITHUB_OUTPUT
+
+      - name: Add reaction to comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket'
+            })
+
+  run-tests:
+    needs: [check-comment]
+    if: |
+      always() && 
+      (github.event_name == 'pull_request' || needs.check-comment.outputs.should_run == 'true')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get PR details
+        id: pr
+        uses: actions/github-script@v7
+        if: github.event_name == 'issue_comment'
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            return pr.data;
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      
-      - name: Setup Node.js
+          ref: ${{ github.event_name == 'issue_comment' && fromJson(steps.pr.outputs.result).head.sha || github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js (adjust to your language)
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
+
       - name: Install dependencies
         run: npm ci
-      
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps
-      
+
       - name: Run tests
         run: npm test
-      
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
+
+      - name: Comment result on PR
+        if: github.event_name == 'issue_comment' && always()
+        uses: actions/github-script@v7
         with:
-          name: test-results
-          path: test-results/
-          if-no-files-found: ignore
-      
-      - name: Report status
-        if: always()
-        run: |
-          if [ ${{ job.status }} == 'success' ]; then
-            echo "✅ All tests passed"
-          else
-            echo "❌ Tests failed"
-            exit 1
-          fi
+          script: |
+            const status = '${{ job.status }}' === 'success' ? '✅ Tests passed!' : '❌ Tests failed!';
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: status
+            })
