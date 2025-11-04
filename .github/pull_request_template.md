@@ -6,6 +6,6 @@
  - [ ] Unit tests (shared components and utils)
 
 ## Testing
-Click here to run tests: [▶️ Run Tests](../../actions/workflows/pr-tests.yml)
+Click [here](#issue-comment-box) to jump to the comment box, then type `/test`
 
-Or type `/test` in comments
+⚠️ **Note:** Tests must pass before this PR can be merged.
