@@ -1,12 +1,10 @@
+# .github/workflows/pr-tests.yml
 name: PR Tests
 
 on:
-  # Trigger via PR comment with /test command
+  # Only trigger via PR comment with /test command
   issue_comment:
     types: [created]
-  # Also trigger on PR events
-  pull_request:
-    types: [ opened, synchronize, reopened ]
 
 jobs:
   check-comment:
@@ -17,12 +15,9 @@ jobs:
       contains(github.event.comment.body, '/test')
     runs-on: ubuntu-latest
     outputs:
-      should_run: ${{ steps.check.outputs.result }}
+      pr_number: ${{ steps.pr.outputs.number }}
+      pr_sha: ${{ steps.pr.outputs.sha }}
     steps:
-      - name: Check if should run
-        id: check
-        run: echo "result=true" >> $GITHUB_OUTPUT
-
       - name: Add reaction to comment
         uses: actions/github-script@v7
         with:
@@ -34,18 +29,9 @@ jobs:
               content: 'rocket'
             })
 
-  run-tests:
-    needs: [check-comment]
-    if: |
-      always() && 
-      (github.event_name == 'pull_request' || needs.check-comment.outputs.should_run == 'true')
-    runs-on: ubuntu-latest
-
-    steps:
       - name: Get PR details
         id: pr
         uses: actions/github-script@v7
-        if: github.event_name == 'issue_comment'
         with:
           script: |
             const pr = await github.rest.pulls.get({
@@ -53,12 +39,18 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number
             });
-            return pr.data;
+            core.setOutput('number', pr.data.number);
+            core.setOutput('sha', pr.data.head.sha);
 
-      - name: Checkout code
+  run-tests:
+    needs: [check-comment]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'issue_comment' && fromJson(steps.pr.outputs.result).head.sha || github.event.pull_request.head.sha }}
+          ref: ${{ needs.check-comment.outputs.pr_sha }}
 
       - name: Setup Node.js (adjust to your language)
         uses: actions/setup-node@v4
@@ -67,19 +59,39 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
 
       - name: Run tests
+        id: tests
         run: npm test
 
       - name: Comment result on PR
-        if: github.event_name == 'issue_comment' && always()
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
-            const status = '${{ job.status }}' === 'success' ? '✅ Tests passed!' : '❌ Tests failed!';
+            const status = '${{ steps.tests.outcome }}' === 'success' ? '✅ Tests passed!' : '❌ Tests failed!';
+            const sha = '${{ needs.check-comment.outputs.pr_sha }}';
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: status
+              issue_number: ${{ needs.check-comment.outputs.pr_number }},
+              body: `${status}\n\nCommit: ${sha.substring(0, 7)}`
             })
+
+      - name: Update commit status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const state = '${{ steps.tests.outcome }}' === 'success' ? 'success' : 'failure';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ needs.check-comment.outputs.pr_sha }}',
+              state: state,
+              context: 'PR Tests',
+              description: state === 'success' ? 'All tests passed' : 'Tests failed'
+            });
