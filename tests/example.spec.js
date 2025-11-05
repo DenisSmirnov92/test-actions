@@ -1,12 +1,11 @@
 import { test, expect } from '@playwright/test';
 
-test('basic test', async ({ page }) => {
+test('basic test 1', async ({ page }) => {
   await page.goto('https://example.com');
   await expect(page).toHaveTitle('Example Domain');
-  await page.waitForURL('https://example.com');
 });
 
-// test('basic failed test', async ({ page }) => {
-//   await page.goto('https://example.com');
-//   await expect(page).toHaveTitle('Example Domain 1');
-// });
+test('basic test 2', async ({ page }) => {
+  await page.goto('https://example.com');
+  await expect(page).toHaveTitle('Example Domain');
+});
