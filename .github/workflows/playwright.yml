@@ -79,13 +79,11 @@ jobs:
         with:
           ref: ${{ needs.check-comment.outputs.pr_sha }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-
-      - name: Install pnpm
-        run: npm install -g pnpm@10
+      - name: Install pnpm globally
+        run: |
+          corepack enable
+          corepack prepare pnpm@10 --activate
+          pnpm --version
 
       - name: Get pnpm store directory
         id: pnpm-cache
