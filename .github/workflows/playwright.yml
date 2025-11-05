@@ -70,8 +70,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
-        shard_count: [4]
+        shard: [1]
+        shard_count: [1]
 
     steps:
       - name: Checkout PR code
@@ -103,14 +103,6 @@ jobs:
       - name: Run Playwright tests (shard ${{ matrix.shard }}/${{ matrix.shard_count }})
         id: tests
         run: pnpm playwright test --shard=${{ matrix.shard }}/${{ matrix.shard_count }}
-
-      - name: Upload test results
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v5
-        with:
-          name: playwright-report-${{ matrix.shard }}
-          path: playwright-report/
-          retention-days: 7
 
       - name: Upload blob report
         if: ${{ !cancelled() }}
