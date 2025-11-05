@@ -116,6 +116,9 @@ jobs:
     if: ${{ !cancelled() }}
     needs: [check-comment, run-tests]
     runs-on: ubuntu-latest
+    outputs:
+      report_artifact_id: ${{ steps.upload-merged.outputs.artifact-id }}
+      report_artifact_url: ${{ steps.report-meta.outputs.url }}
 
     steps:
       - name: Checkout PR code
@@ -159,11 +162,22 @@ jobs:
         run: pnpm playwright merge-reports --reporter html ./all-blob-reports
 
       - name: Upload merged HTML report
+        id: upload-merged
         uses: actions/upload-artifact@v5
         with:
           name: playwright-report-merged
           path: playwright-report/
           retention-days: 7
+
+      - name: Build artifact URL
+        id: report-meta
+        run: |
+          ARTIFACT_ID='${{ steps.upload-merged.outputs.artifact-id }}'
+          if [ -n "$ARTIFACT_ID" ]; then
+            echo "url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          fi
 
   report-results:
     needs: [check-comment, merge-reports]
@@ -187,12 +201,13 @@ jobs:
           script: |
             const sha = '${{ needs.check-comment.outputs.pr_sha }}';
             const message = '${{ steps.check-results.outputs.message }}';
-            github.rest.issues.createComment({
+            const reportUrl = '${{ needs.merge-reports.outputs.report_artifact_url }}' || 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}';
+            await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.check-comment.outputs.pr_number }},
-              body: `${message}\n\nCommit: ${sha.substring(0, 7)}\n\n[View test report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
-            })
+              body: `${message}\n\nCommit: ${sha.substring(0, 7)}\n\n[🧪 View test report](${reportUrl})`
+            });
 
       - name: Update commit status
         uses: actions/github-script@v7
