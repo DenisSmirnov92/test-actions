@@ -104,7 +104,7 @@ jobs:
       name: ${{ github.ref == 'refs/heads/staging' && 'development' || 'development' }}
 
     env:
-      APP_BASE_URL: ${{ secrets.APP_BASE_URL && secrets.APP_BASE_URL || 'http://localhost:3000' }} # TODO: use Vercel Preview link
+      APP_BASE_URL: ${{ secrets.APP_BASE_URL && secrets.APP_BASE_URL || 'http://example.com' }} # TODO: use Vercel Preview link
       TEST_EMAIL: ${{ secrets.TEST_EMAIL && secrets.TEST_EMAIL || 'test@example.com' }}
       TEST_PASSWORD: ${{ secrets.TEST_PASSWORD && secrets.TEST_PASSWORD || 'password' }}
 
@@ -143,7 +143,9 @@ jobs:
 
       - name: Run Playwright tests (shard ${{ matrix.shard }}/${{ matrix.shard_count }})
         id: tests
-        run: pnpm playwright test --shard=${{ matrix.shard }}/${{ matrix.shard_count }}
+        run: |
+          echo "Preview link: ${{ env.APP_BASE_URL }}"
+          pnpm playwright test --shard=${{ matrix.shard }}/${{ matrix.shard_count }}
 
       - name: Upload blob report
         if: ${{ !cancelled() }}
@@ -221,14 +223,14 @@ jobs:
           fi
 
   report-results:
-    needs: [check-comment, merge-reports]
+    needs: [check-comment, run-tests, merge-reports]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check test results
         id: check-results
         run: |
-          if [ "${{ needs.merge-reports.result }}" == "success" ]; then
+          if [ "${{ needs.run-tests.result }}" = "success" ]; then
             echo "status=success" >> $GITHUB_OUTPUT
             echo "message=✅ All E2E tests passed!" >> $GITHUB_OUTPUT
           else
@@ -264,3 +266,9 @@ jobs:
               description: state === 'success' ? 'All E2E tests passed' : 'E2E Tests failed',
               target_url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             });
+
+      - name: Fail workflow if any shard failed
+        if: ${{ steps.check-results.outputs.status == 'failure' }}
+        run: |
+          echo "::error::At least one shard failed"
+          exit 1
