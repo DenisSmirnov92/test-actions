@@ -1,9 +1,21 @@
 name: E2E Tests (Playwright)
 
 on:
-  # Only trigger via PR comment with /test command
+  # Trigger via PR comment with /test command
   issue_comment:
     types: [created]
+
+  # Manual trigger from CLI or UI
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to test'
+        required: true
+        type: number
+      pr_sha:
+        description: 'Commit SHA to test (optional, defaults to PR HEAD)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -13,42 +25,63 @@ permissions:
 
 jobs:
   check-comment:
-    # Only run on PR comments with /test
+    # Run on PR comments with /test OR manual workflow dispatch
     if: |
-      github.event_name == 'issue_comment' && 
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/test')
+      (github.event_name == 'issue_comment' && 
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '/test')) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       pr_number: ${{ steps.pr.outputs.number }}
       pr_sha: ${{ steps.pr.outputs.sha }}
     steps:
       - name: Add reaction to comment
-        uses: actions/github-script@v7
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v8
         with:
           script: |
-            github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
-              content: 'rocket'
-            })
+            if (context.payload.comment) {
+              github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: 'rocket'
+              })
+            }
 
       - name: Get PR details
         id: pr
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            core.setOutput('number', pr.data.number);
-            core.setOutput('sha', pr.data.head.sha);
+            let prNumber, prSha;
+            
+            if (context.eventName === 'workflow_dispatch') {
+              // Manual trigger
+              prNumber = parseInt('${{ github.event.inputs.pr_number }}');
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              prSha = '${{ github.event.inputs.pr_sha }}' || pr.data.head.sha;
+            } else {
+              // Comment trigger
+              prNumber = context.issue.number;
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber
+              });
+              prSha = pr.data.head.sha;
+            }
+            
+            core.setOutput('number', prNumber);
+            core.setOutput('sha', prSha);
 
       - name: Set status to pending
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             await github.rest.repos.createCommitStatus({
@@ -67,11 +100,19 @@ jobs:
     container:
       image: mcr.microsoft.com/playwright:v1.56.1
 
+    environment:
+      name: ${{ github.ref == 'refs/heads/staging' && 'development' || 'development' }}
+
+    env:
+      APP_BASE_URL: ${{ secrets.APP_BASE_URL && secrets.APP_BASE_URL || 'http://localhost:3000' }} # TODO: use Vercel Preview link
+      TEST_EMAIL: ${{ secrets.TEST_EMAIL && secrets.TEST_EMAIL || 'test@example.com' }}
+      TEST_PASSWORD: ${{ secrets.TEST_PASSWORD && secrets.TEST_PASSWORD || 'password' }}
+
     strategy:
       fail-fast: false
       matrix:
-        shard: [1]
-        shard_count: [1]
+        shard: [1, 2]
+        shard_count: [2]
 
     steps:
       - name: Checkout PR code
@@ -189,10 +230,10 @@ jobs:
         run: |
           if [ "${{ needs.merge-reports.result }}" == "success" ]; then
             echo "status=success" >> $GITHUB_OUTPUT
-            echo "message=✅ All tests passed!" >> $GITHUB_OUTPUT
+            echo "message=✅ All E2E tests passed!" >> $GITHUB_OUTPUT
           else
             echo "status=failure" >> $GITHUB_OUTPUT
-            echo "message=❌ Tests failed!" >> $GITHUB_OUTPUT
+            echo "message=❌ E2E Tests failed!" >> $GITHUB_OUTPUT
           fi
 
       - name: Comment result on PR
@@ -206,11 +247,11 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.check-comment.outputs.pr_number }},
-              body: `${message}\n\nCommit: ${sha.substring(0, 7)}\n\n[🧪 View test report](${reportUrl})`
+              body: `${message}\n\nCommit: ${sha.substring(0, 7)}\n\n[View test report](${reportUrl})`
             });
 
       - name: Update commit status
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const state = '${{ steps.check-results.outputs.status }}';
@@ -220,6 +261,6 @@ jobs:
               sha: '${{ needs.check-comment.outputs.pr_sha }}',
               state: state,
               context: 'E2E Tests',
-              description: state === 'success' ? 'All tests passed' : 'Tests failed',
+              description: state === 'success' ? 'All E2E tests passed' : 'E2E Tests failed',
               target_url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             });
