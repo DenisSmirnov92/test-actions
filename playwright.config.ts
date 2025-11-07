@@ -16,6 +16,7 @@ export default defineConfig({
   fullyParallel: true,
   use: {
     trace: 'on-first-retry',
+    baseURL: process.env.APP_BASE_URL,
   },
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
