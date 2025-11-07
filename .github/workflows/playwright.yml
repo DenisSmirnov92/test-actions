@@ -1,7 +1,7 @@
 name: E2E Tests (Playwright)
 
 on:
-  # Trigger via PR comment with /test command
+  # Trigger via PR comment with /e2e-test command
   issue_comment:
     types: [created]
 
@@ -16,6 +16,10 @@ on:
         description: 'Commit SHA to test (optional, defaults to PR HEAD)'
         required: false
         type: string
+      app_base_url:
+        description: 'Preview URL to run tests against (APP_BASE_URL)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -25,16 +29,17 @@ permissions:
 
 jobs:
   check-comment:
-    # Run on PR comments with /test OR manual workflow dispatch
+    # Run on PR comments with /e2e-test OR manual workflow dispatch
     if: |
       (github.event_name == 'issue_comment' && 
        github.event.issue.pull_request &&
-       contains(github.event.comment.body, '/test')) ||
+       contains(github.event.comment.body, '/e2e-test')) ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       pr_number: ${{ steps.pr.outputs.number }}
       pr_sha: ${{ steps.pr.outputs.sha }}
+      app_base_url: ${{ steps.preview.outputs.app_base_url }}
     steps:
       - name: Add reaction to comment
         if: github.event_name == 'issue_comment'
@@ -80,6 +85,40 @@ jobs:
             core.setOutput('number', prNumber);
             core.setOutput('sha', prSha);
 
+      - name: Extract Preview URL (APP_BASE_URL)
+        id: preview
+        uses: actions/github-script@v8
+        with:
+          script: |
+            let appBaseUrl = '';
+            if (context.eventName === 'workflow_dispatch') {
+              appBaseUrl = `${{ github.event.inputs.app_base_url || '' }}`.trim();
+            } else {
+              const body = (context.payload.comment?.body || '').trim();
+              const url = body.match(/https?:\/\/\S+/i);
+              if (url?.[0]) appBaseUrl = url[0];
+            }
+
+            // If no override provided, generate default from branch
+            if (!appBaseUrl) {
+              const branch = context.payload.pull_request?.head?.ref ||
+              (process.env.GITHUB_REF_NAME ?? '').replace(/^refs\/heads\//, '');
+              const branchSlug = branch.replace(/\//g, '-');
+              appBaseUrl = `https://project-git-${branchSlug}-scope.vercel.app`;
+            }
+
+            if (appBaseUrl && !/^https?:\/\//i.test(appBaseUrl)) {
+              core.warning(`Provided Preview URL doesn't look like a URL: ${appBaseUrl}`);
+              appBaseUrl = '';
+            }
+            
+            if (!appBaseUrl) {
+              appBaseUrl = secrets.APP_BASE_URL && secrets.APP_BASE_URL || 'http://localhost:3000';
+            }
+
+            core.info(`Using APP_BASE_URL: ${appBaseUrl || '(not provided)'}`);
+            core.setOutput('app_base_url', appBaseUrl);
+
       - name: Set status to pending
         uses: actions/github-script@v8
         with:
@@ -104,9 +143,9 @@ jobs:
       name: ${{ github.ref == 'refs/heads/staging' && 'development' || 'development' }}
 
     env:
-      APP_BASE_URL: ${{ secrets.APP_BASE_URL && secrets.APP_BASE_URL || 'http://example.com' }} # TODO: use Vercel Preview link
-      TEST_EMAIL: ${{ secrets.TEST_EMAIL && secrets.TEST_EMAIL || 'test@example.com' }}
-      TEST_PASSWORD: ${{ secrets.TEST_PASSWORD && secrets.TEST_PASSWORD || 'password' }}
+      APP_BASE_URL: ${{ needs.check-comment.outputs.app_base_url }}
+      TEST_EMAIL: ${{ secrets.TEST_EMAIL && secrets.TEST_EMAIL || '' }}
+      TEST_PASSWORD: ${{ secrets.TEST_PASSWORD && secrets.TEST_PASSWORD || '' }}
 
     strategy:
       fail-fast: false
@@ -245,11 +284,13 @@ jobs:
             const sha = '${{ needs.check-comment.outputs.pr_sha }}';
             const message = '${{ steps.check-results.outputs.message }}';
             const reportUrl = '${{ needs.merge-reports.outputs.report_artifact_url }}' || 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}';
+            const appBaseUrl = '${{ needs.check-comment.outputs.app_base_url }}';
+            const urlLine = appBaseUrl ? `\nPreview: ${appBaseUrl}` : '';
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: ${{ needs.check-comment.outputs.pr_number }},
-              body: `${message}\n\nCommit: ${sha.substring(0, 7)}\n\n[View test report](${reportUrl})`
+              body: `${message}\n\nCommit: ${sha.substring(0, 7)}${urlLine}\n\n[View test report](${reportUrl})`
             });
 
       - name: Update commit status
