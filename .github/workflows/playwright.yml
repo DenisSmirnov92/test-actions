@@ -39,6 +39,7 @@ jobs:
     outputs:
       pr_number: ${{ steps.pr.outputs.number }}
       pr_sha: ${{ steps.pr.outputs.sha }}
+      pr_branch: ${{ steps.pr.outputs.branch }}
       app_base_url: ${{ steps.preview.outputs.app_base_url }}
     steps:
       - name: Add reaction to comment
@@ -60,7 +61,7 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            let prNumber, prSha;
+            let prNumber, prSha, prBranch;
             
             if (context.eventName === 'workflow_dispatch') {
               // Manual trigger
@@ -71,6 +72,7 @@ jobs:
                 pull_number: prNumber
               });
               prSha = '${{ github.event.inputs.pr_sha }}' || pr.data.head.sha;
+              prBranch = pr.data.head.ref;
             } else {
               // Comment trigger
               prNumber = context.issue.number;
@@ -80,10 +82,12 @@ jobs:
                 pull_number: prNumber
               });
               prSha = pr.data.head.sha;
+              prBranch = pr.data.head.ref;
             }
             
             core.setOutput('number', prNumber);
             core.setOutput('sha', prSha);
+            core.setOutput('branch', prBranch);
 
       - name: Extract Preview URL (APP_BASE_URL)
         id: preview
@@ -99,11 +103,9 @@ jobs:
               if (url?.[0]) appBaseUrl = url[0];
             }
 
-            // If no override provided, generate default from branch
             if (!appBaseUrl) {
-              const branch = context.payload.pull_request?.head?.ref ||
-              (process.env.GITHUB_REF_NAME ?? '').replace(/^refs\/heads\//, '');
-              const branchSlug = branch.replace(/\//g, '-');
+              const headBranch = '${{ steps.pr.outputs.branch }}';
+              const branchSlug = headBranch.replace(/\//g, '-');
               appBaseUrl = `https://project-git-${branchSlug}-scope.vercel.app`;
             }
 
